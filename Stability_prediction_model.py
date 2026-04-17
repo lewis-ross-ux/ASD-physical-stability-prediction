@@ -6,15 +6,18 @@ data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stabi
 data = data.drop(data.columns[20:32], axis=1)
 data.drop(['Unnamed: 0.6', 'Unnamed: 0.5', 'Unnamed: 0.4', 'Unnamed: 0.7'], axis=1, inplace=True)
 
+#drop rows where polymer == 'pure'
+data = data[data['Polymer'] != 'Pure'].reset_index(drop=True)
+
 #Store values for API/ polymer, condition
 original_api = data['API']
 original_polymer = data['Polymer']
 original_condition = data['condition']
 
 #fill pure api with 0 for polymer mol desc
-pure = data['Polymer']=='Pure'
+#pure = data['Polymer']=='Pure'
 polymer_descriptors = data.columns[233:]
-data.loc[pure, polymer_descriptors] = 0
+#data.loc[pure, polymer_descriptors] = 0
 suffix = '_polymer'
 data.rename(columns={col: suffix+col for col in polymer_descriptors}, inplace=True)
 
@@ -88,7 +91,7 @@ print('length of dataframe\n', data.shape)
 #Define Features for ColumnTransformer (AFTER ALL DROPS within dataframe) ---
 categorical_features = ['API', 'Polymer']
 # Identify numerical features:
-dont_scale_features = data.drop(['days_stable_min', 'GFA', 'is_pure', ], axis=1).columns.tolist()
+dont_scale_features = data.drop(['days_stable_min', 'GFA'], axis=1).columns.tolist()
 numerical_features = [col for col in dont_scale_features if col not in categorical_features]
 
 #split data
@@ -213,6 +216,8 @@ from sklearn.metrics import f1_score
 import os
 from tqdm.auto import tqdm
 
+results = {}
+
 scorer = {
     'F1_score': make_scorer(f1_score, average='binary'),
     'Accuracy': 'accuracy',
@@ -222,63 +227,52 @@ scorer = {
 #groups for GroupKFold
 groups = (original_api.astype(str)).values
 
+#GroupKFold for outer cv
+outer_cv = GroupKFold(n_splits=10)
+inner_cv = GroupKFold(n_splits=10)
+
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Conditions'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Pure_systems_removed'
 os.makedirs(save_directory, exist_ok=True)
 
-for condition in original_condition.unique():
-    results = {}
-
-    idx=original_condition==condition
-    X_cond = X.loc[idx].copy()
-    y_cond=y.loc[idx].copy()
-    groups_cond = original_api.loc[idx].astype(str).values
-
-    print(f"\n=== Condition: {condition}")
-
-    outer_cv = GroupKFold(n_splits=5)
-    inner_cv = GroupKFold(n_splits=5)
+for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', classifier)
+    ])
     
-    for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
-        pipeline = Pipeline([
-            ('preprocessor', preprocessor),
-            ('model', classifier)
-        ])
-        
-        print('Model:', model_name)
-      
-        # Perform nested cross-validation
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=0, n_jobs=20)
-        
-        fit_params = {'groups': groups_cond}
-        
-        # Evaluate outer loop scores
-        nested_score = cross_validate(grid_search, X_cond, y_cond, groups=groups_cond, cv=outer_cv, params=fit_params, scoring=scorer, n_jobs=1, return_train_score=False)
-        
-        # Get predictions
-        predictions = cross_val_predict(grid_search, X_cond, y_cond, groups=groups_cond, cv=outer_cv, params=fit_params, method='predict', n_jobs=1)
+    print('Model:', model_name)
+  
+    # Perform nested cross-validation
+    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=0, n_jobs=10)
     
-        # Fit to find best parameters
-        grid_search.fit(X_cond, y_cond, **fit_params)
-        best_params = grid_search.best_params_
-        
-        # Save the best model
-        best_model = grid_search.best_estimator_
-        condition_file_path = os.path.join(save_directory, f'{condition}')
-        os.makedirs(condition_file_path, exist_ok=True)
-        model_file_path = os.path.join(condition_file_path, f'{model_name}_{condition}_best_model.pkl')
-        with open(model_file_path, 'wb') as model_file:
-            pickle.dump(best_model, model_file)
+    fit_params = {'groups': groups}
     
-        results[(condition, model_name)] = {
-            'nested_score': nested_score,
-            'ground_truth': y_cond.values,
-            'predictions': predictions,
-            'best_params': best_params,
-        }
+    # Evaluate outer loop scores
+    nested_score = cross_validate(grid_search, X, y, groups=groups, cv=outer_cv, params=fit_params, scoring=scorer, n_jobs=1, return_train_score=False)
+    
+    # Get predictions
+    predictions = cross_val_predict(grid_search, X, y, groups=groups, cv=outer_cv, params=fit_params, method='predict', n_jobs=1)
 
-    dictionary_file_path = os.path.join(condition_file_path, f'{condition}_Classifiers_results_dictionary.pkl')   
-    with open(dictionary_file_path, 'wb') as f:
-        pickle.dump(results, f)
+    # Fit to find best parameters
+    grid_search.fit(X, y, **fit_params)
+    best_params = grid_search.best_params_
+    
+    # Save the best model
+    best_model = grid_search.best_estimator_
+    model_file_path = os.path.join(save_directory, f'{model_name}_best_model.pkl')
+    with open(model_file_path, 'wb') as model_file:
+        pickle.dump(best_model, model_file)
+
+    results[model_name] = {
+        'nested_score': nested_score,
+        'ground_truth': y.values,
+        'predictions': predictions,
+        'best_params': best_params,
+    }
+
+dictionary_file_path = os.path.join(save_directory, 'Pure_API_Removed_Classifiers_results_dictionary.pkl')   
+with open(dictionary_file_path, 'wb') as f:
+    pickle.dump(results, f)
 
 print('Finito')
