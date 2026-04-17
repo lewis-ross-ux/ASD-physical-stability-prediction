@@ -115,20 +115,20 @@ models = {
                 'model__C': np.logspace(-4, 4, 20), 
                 'model__l1_ratio': [0],
                 'model__solver': ['lbfgs', 'newton-cg', 'sag'],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-3, 3, 8),
                 'model__solver': ['liblinear'],
                 'model__l1_ratio': [1],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-4, 4, 20),
                 'model__penalty': ['elasticnet'],
                 'model__solver': ['saga'],
                 'model__l1_ratio': [0.1, 0.5, 0.9],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             }
         ]
     ),
@@ -139,14 +139,14 @@ models = {
             'model__kernel': ['linear', 'poly', 'rbf'],
             'model__degree':[1,2,3,4,5],
             'model__gamma': [0.001, 0.01, 0.1, 1],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'K Neighbors Classifier': (
         KNeighborsClassifier(), 
         {
             'model__n_neighbors': np.arange(2,30,1),
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'Random Forest Classifier': (
@@ -157,7 +157,7 @@ models = {
             'model__max_depth': [None, 1, 2, 3, 5, 10],
             'model__min_samples_split': [2, 5, 10, 20],
             'model__max_samples': [0.5, 0.7, 0.9, 1],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'XGBoost classifier': (
@@ -173,7 +173,7 @@ models = {
             'model__learning_rate': [0.001],
             'model__n_estimators': [500, 800, 1000],
             'model__reg_alpha': [1e-5, 1e-2, 0.1, 1, 100],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         },
     ),
     'MLP Classifier': (
@@ -185,7 +185,7 @@ models = {
             'model__solver': ['sgd', 'adam'],
             'model__learning_rate': ['adaptive'],
             'model__learning_rate_init': [0.001, 0.01],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     )
 }
@@ -225,23 +225,24 @@ scorer = {
 groups = (original_api.astype(str)).values
 
 #GroupKFold for outer cv
-outer_cv = GroupKFold(n_splits=10)
-inner_cv = GroupKFold(n_splits=10)
+outer_cv = GroupKFold(n_splits=5)
+inner_cv = GroupKFold(n_splits=5)
 
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Base'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/SelectFromModel'
 os.makedirs(save_directory, exist_ok=True)
 
 for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
     pipeline = Pipeline([
         ('preprocessor', preprocessor),
+        ('feature_selection', SelectFromModel(estimator=RandomForestClassifier(random_state=42, n_estimators=100, max_depth=10), threshold=-np.inf)),
         ('model', classifier)
     ])
     
     print('Model:', model_name)
   
     # Perform nested cross-validation
-    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=0, n_jobs=10)
+    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=0, n_jobs=30)
     
     fit_params = {'groups': groups}
     
@@ -268,7 +269,7 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
         'best_params': best_params,
     }
 
-dictionary_file_path = os.path.join(save_directory, 'Base_Classifiers_results_dictionary.pkl')   
+dictionary_file_path = os.path.join(save_directory, 'SelectFromModelClassifiers_results_dictionary.pkl')   
 with open(dictionary_file_path, 'wb') as f:
     pickle.dump(results, f)
 
