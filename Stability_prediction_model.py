@@ -6,18 +6,15 @@ data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stabi
 data = data.drop(data.columns[20:32], axis=1)
 data.drop(['Unnamed: 0.6', 'Unnamed: 0.5', 'Unnamed: 0.4', 'Unnamed: 0.7'], axis=1, inplace=True)
 
-#drop rows where polymer == 'pure'
-data = data[data['Polymer'] != 'Pure'].reset_index(drop=True)
-
 #Store values for API/ polymer, condition
 original_api = data['API']
 original_polymer = data['Polymer']
 original_condition = data['condition']
 
 #fill pure api with 0 for polymer mol desc
-#pure = data['Polymer']=='Pure'
+pure = data['Polymer']=='Pure'
 polymer_descriptors = data.columns[233:]
-#data.loc[pure, polymer_descriptors] = 0
+data.loc[pure, polymer_descriptors] = 0
 suffix = '_polymer'
 data.rename(columns={col: suffix+col for col in polymer_descriptors}, inplace=True)
 
@@ -91,7 +88,7 @@ print('length of dataframe\n', data.shape)
 #Define Features for ColumnTransformer (AFTER ALL DROPS within dataframe) ---
 categorical_features = ['API', 'Polymer']
 # Identify numerical features:
-dont_scale_features = data.drop(['days_stable_min', 'GFA'], axis=1).columns.tolist()
+dont_scale_features = data.drop(['days_stable_min', 'GFA', 'is_pure', ], axis=1).columns.tolist()
 numerical_features = [col for col in dont_scale_features if col not in categorical_features]
 
 #split data
@@ -118,12 +115,14 @@ models = {
                 'model__C': np.logspace(-4, 4, 20), 
                 'model__l1_ratio': [0],
                 'model__solver': ['lbfgs', 'newton-cg', 'sag'],
+                'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
                 #'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-3, 3, 8),
                 'model__solver': ['liblinear'],
                 'model__l1_ratio': [1],
+                'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
                 #'feature_selection__max_features': [20, 30, 50]
             },
             {
@@ -131,6 +130,7 @@ models = {
                 'model__penalty': ['elasticnet'],
                 'model__solver': ['saga'],
                 'model__l1_ratio': [0.1, 0.5, 0.9],
+                'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
                 #'feature_selection__max_features': [20, 30, 50]
             }
         ]
@@ -142,6 +142,7 @@ models = {
             'model__kernel': ['linear', 'poly', 'rbf'],
             'model__degree':[1,2,3,4,5],
             'model__gamma': [0.001, 0.01, 0.1, 1],
+            'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
             #'feature_selection__max_features': [20, 30, 50]
         }
     ),
@@ -149,6 +150,7 @@ models = {
         KNeighborsClassifier(), 
         {
             'model__n_neighbors': np.arange(2,30,1),
+            'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
             #'feature_selection__max_features': [20, 30, 50]
         }
     ),
@@ -160,6 +162,7 @@ models = {
             'model__max_depth': [None, 1, 2, 3, 5, 10],
             'model__min_samples_split': [2, 5, 10, 20],
             'model__max_samples': [0.5, 0.7, 0.9, 1],
+            'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
             #'feature_selection__max_features': [20, 30, 50]
         }
     ),
@@ -176,6 +179,7 @@ models = {
             'model__learning_rate': [0.001],
             'model__n_estimators': [500, 800, 1000],
             'model__reg_alpha': [1e-5, 1e-2, 0.1, 1, 100],
+            'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
             #'feature_selection__max_features': [20, 30, 50]
         },
     ),
@@ -188,6 +192,7 @@ models = {
             'model__solver': ['sgd', 'adam'],
             'model__learning_rate': ['adaptive'],
             'model__learning_rate_init': [0.001, 0.01],
+            'preprocessor__num__pca__n_components': [10, 20, 30, 35, 40],
             #'feature_selection__max_features': [20, 30, 50]
         }
     )
@@ -197,10 +202,16 @@ models = {
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+
+number_pipeline = Pipeline([
+    ("scale", StandardScaler()), 
+    ("pca", PCA())
+])
 
 preprocessor = ColumnTransformer(
     transformers=[ 
-        ('num', StandardScaler(), numerical_features),
+        ('num', number_pipeline, numerical_features),
     ],
     remainder = 'passthrough' # Keep any other columns not explicitly transformed (e.g., if there are any not in num or cat)
 )
@@ -215,6 +226,10 @@ import pickle
 from sklearn.metrics import f1_score
 import os
 from tqdm.auto import tqdm
+import shutil
+
+# Save a copy of the running script
+shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
 
 results = {}
 
@@ -232,7 +247,7 @@ outer_cv = GroupKFold(n_splits=10)
 inner_cv = GroupKFold(n_splits=10)
 
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Pure_systems_removed'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/PCA'
 os.makedirs(save_directory, exist_ok=True)
 
 for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
@@ -264,14 +279,32 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
     with open(model_file_path, 'wb') as model_file:
         pickle.dump(best_model, model_file)
 
+    #####-----PCA components vs score (per model)------#######
+    cv_results = pd.DataFrame(grid_search.cv_results_)
+    pca_scores = cv_results[
+        ['param_preprocessor__num__pca__n_components', 'mean_test_score']
+        ].copy()
+    
+    pca_scores.rename(
+        columns={'param_preprocessor__num__pca__n_components':'n_components',
+                'mean_test_score':'mean_score'
+               }, 
+                inplace=True, 
+    )
+            
+    pca_scores['n_components']=pca_scores['n_components'].astype(int)
+    
+    pca_summary = pca_scores.groupby('n_components')['mean_score'].agg(['mean', 'std']).reset_index()
+
     results[model_name] = {
         'nested_score': nested_score,
         'ground_truth': y.values,
         'predictions': predictions,
         'best_params': best_params,
+        'PCA_n_components_score': pca_summary
     }
 
-dictionary_file_path = os.path.join(save_directory, 'Pure_API_Removed_Classifiers_results_dictionary.pkl')   
+dictionary_file_path = os.path.join(save_directory, 'PCA_Classifiers_results_dictionary.pkl')   
 with open(dictionary_file_path, 'wb') as f:
     pickle.dump(results, f)
 
