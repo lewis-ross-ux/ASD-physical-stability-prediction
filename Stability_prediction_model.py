@@ -1,12 +1,15 @@
 import pandas as pd
 import numpy as np
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 #load data
 data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stability_dataset_manual_edit.csv")
 data = data.drop(data.columns[20:32], axis=1)
 data.drop(['Unnamed: 0.6', 'Unnamed: 0.5', 'Unnamed: 0.4', 'Unnamed: 0.7'], axis=1, inplace=True)
+
+#drop rows where polymer == 'pure'
+data = data[data['Polymer'] != 'Pure'].reset_index(drop=True)
 
 #Store values for API/ polymer, condition
 original_api = data['API']
@@ -14,9 +17,9 @@ original_polymer = data['Polymer']
 original_condition = data['condition']
 
 #fill pure api with 0 for polymer mol desc
-pure = data['Polymer']=='Pure'
+#pure = data['Polymer']=='Pure'
 polymer_descriptors = data.columns[233:]
-data.loc[pure, polymer_descriptors] = 0
+#data.loc[pure, polymer_descriptors] = 0
 suffix = '_polymer'
 data.rename(columns={col: suffix+col for col in polymer_descriptors}, inplace=True)
 
@@ -90,7 +93,7 @@ print('length of dataframe\n', data.shape)
 #Define Features for ColumnTransformer (AFTER ALL DROPS within dataframe) ---
 categorical_features = ['API', 'Polymer']
 # Identify numerical features:
-dont_scale_features = data.drop(['days_stable_min', 'GFA', 'is_pure', ], axis=1).columns.tolist()
+dont_scale_features = data.drop(['days_stable_min', 'GFA'], axis=1).columns.tolist()
 numerical_features = [col for col in dont_scale_features if col not in categorical_features]
 
 #split data
@@ -117,20 +120,20 @@ models = {
                 'model__C': np.logspace(-4, 4, 20), 
                 'model__l1_ratio': [0],
                 'model__solver': ['lbfgs', 'newton-cg', 'sag'],
-                'feature_selection__max_features': [20, 30, 50]
+                #'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-3, 3, 8),
                 'model__solver': ['liblinear'],
                 'model__l1_ratio': [1],
-                'feature_selection__max_features': [20, 30, 50]
+                #'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-4, 4, 20),
                 'model__penalty': ['elasticnet'],
                 'model__solver': ['saga'],
                 'model__l1_ratio': [0.1, 0.5, 0.9],
-                'feature_selection__max_features': [20, 30, 50]
+                #'feature_selection__max_features': [20, 30, 50]
             }
         ]
     ),
@@ -141,14 +144,14 @@ models = {
             'model__kernel': ['linear', 'poly', 'rbf'],
             'model__degree':[1,2,3,4,5],
             'model__gamma': [0.001, 0.01, 0.1, 1],
-            'feature_selection__max_features': [20, 30, 50]
+            #'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'K Neighbors Classifier': (
         KNeighborsClassifier(), 
         {
             'model__n_neighbors': np.arange(2,30,1),
-            'feature_selection__max_features': [20, 30, 50]
+            #'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'Random Forest Classifier': (
@@ -159,7 +162,7 @@ models = {
             'model__max_depth': [None, 1, 2, 3, 5, 10],
             'model__min_samples_split': [2, 5, 10, 20],
             'model__max_samples': [0.5, 0.7, 0.9, 1],
-            'feature_selection__max_features': [20, 30, 50]
+            #'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'XGBoost classifier': (
@@ -177,7 +180,7 @@ models = {
             'model__learning_rate': [0.01, 0.1],
             'model__n_estimators': [300, 500, 800],
             'model__reg_lambda': [1e-2, 0.1, 10],
-            'feature_selection__max_features': [20, 30, 50]
+            #'feature_selection__max_features': [20, 30, 50]
         },
     ),
     'MLP Classifier': (
@@ -189,7 +192,7 @@ models = {
             'model__solver': ['sgd', 'adam'],
             'model__learning_rate': ['adaptive'],
             'model__learning_rate_init': [0.001, 0.01],
-            'feature_selection__max_features': [20, 30, 50]
+            #'feature_selection__max_features': [20, 30, 50]
         }
     )
 }
@@ -232,7 +235,7 @@ outer_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
 inner_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
 
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/SelectFromModel'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Pure_systems_removed'
 os.makedirs(save_directory, exist_ok=True)
 # Save a copy of the running script
 shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
@@ -244,7 +247,6 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
 
     pipeline = Pipeline([
         ('preprocessor', preprocessor),
-        ('feature_selection', SelectFromModel(estimator=RandomForestClassifier(random_state=42, n_estimators=100, max_depth=10, n_jobs=1), threshold=-np.inf)),
         ('model', classifier)
     ])
     
@@ -276,7 +278,7 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
         'best_params': best_params,
     }
   
-dictionary_file_path = os.path.join(save_directory, 'SelectFromModelClassifiers_results_dictionary.pkl')
+dictionary_file_path = os.path.join(save_directory, 'Pure_API_Removed_Classifiers_results_dictionary.pkl')
 with open(dictionary_file_path, 'wb') as f:
     pickle.dump(results, f)
 
