@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 
 #load data
 data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stability_dataset_manual_edit.csv")
@@ -117,20 +117,20 @@ models = {
                 'model__C': np.logspace(-4, 4, 20), 
                 'model__l1_ratio': [0],
                 'model__solver': ['lbfgs', 'newton-cg', 'sag'],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-3, 3, 8),
                 'model__solver': ['liblinear'],
                 'model__l1_ratio': [1],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             },
             {
                 'model__C': np.logspace(-4, 4, 20),
                 'model__penalty': ['elasticnet'],
                 'model__solver': ['saga'],
                 'model__l1_ratio': [0.1, 0.5, 0.9],
-                #'feature_selection__max_features': [20, 30, 50]
+                'feature_selection__max_features': [20, 30, 50]
             }
         ]
     ),
@@ -141,14 +141,14 @@ models = {
             'model__kernel': ['linear', 'poly', 'rbf'],
             'model__degree':[1,2,3,4,5],
             'model__gamma': [0.001, 0.01, 0.1, 1],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'K Neighbors Classifier': (
         KNeighborsClassifier(), 
         {
             'model__n_neighbors': np.arange(2,30,1),
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'Random Forest Classifier': (
@@ -159,7 +159,7 @@ models = {
             'model__max_depth': [None, 1, 2, 3, 5, 10],
             'model__min_samples_split': [2, 5, 10, 20],
             'model__max_samples': [0.5, 0.7, 0.9, 1],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     ),
     'XGBoost classifier': (
@@ -176,8 +176,8 @@ models = {
             'model__colsample_bytree': [0.7, 0.9, 1],
             'model__learning_rate': [0.01, 0.1],
             'model__n_estimators': [300, 500, 800],
-            'model__reg_alpha': [1e-2, 0.1, 1],
             'model__reg_lambda': [1e-2, 0.1, 10],
+            'feature_selection__max_features': [20, 30, 50]
         },
     ),
     'MLP Classifier': (
@@ -189,7 +189,7 @@ models = {
             'model__solver': ['sgd', 'adam'],
             'model__learning_rate': ['adaptive'],
             'model__learning_rate_init': [0.001, 0.01],
-            #'feature_selection__max_features': [20, 30, 50]
+            'feature_selection__max_features': [20, 30, 50]
         }
     )
 }
@@ -209,6 +209,7 @@ preprocessor = ColumnTransformer(
 #Nested cv
 from sklearn.metrics import make_scorer, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectFromModel
 from sklearn.model_selection import GridSearchCV, cross_val_score, GroupKFold, cross_val_predict, cross_validate
 from sklearn.pipeline import Pipeline
 import pickle
@@ -226,69 +227,57 @@ scorer = {
 #groups for GroupKFold
 groups = (original_api.astype(str)).values
 
+#GroupKFold for outer cv
+outer_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
+inner_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
+
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Base'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/SelectFromModel'
 os.makedirs(save_directory, exist_ok=True)
 # Save a copy of the running script
 shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
 
-for condition in original_condition.unique():
-    results = {}
+results = {}
 
-    idx=original_condition==condition
-    X_cond = X.loc[idx].copy()
-    y_cond=y.loc[idx].copy()
-    groups_cond = original_api.loc[idx].astype(str).values
+for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
+    print('Model:', model_name)
 
-    print(f"\n=== Condition: {condition}")
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('feature_selection', SelectFromModel(estimator=RandomForestClassifier(random_state=42, n_estimators=100, max_depth=10, n_jobs=1), threshold=-np.inf)),
+        ('model', classifier)
+    ])
+    
+    # Perform nested cross-validation
+    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=10, n_jobs=30)
+    
+    fit_params = {'groups': groups}
+    
+    # Evaluate outer loop scores
+    nested_score = cross_validate(grid_search, X, y, groups=groups, cv=outer_cv, params=fit_params, scoring=scorer, n_jobs=1, return_train_score=False)
+    
+    # Get predictions
+    predictions = cross_val_predict(grid_search, X, y, groups=groups, cv=outer_cv, params=fit_params, method='predict', n_jobs=1)
 
-    #GroupKFold for outer cv
-    outer_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
-    inner_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
+    # Fit to find best parameters
+    grid_search.fit(X, y, **fit_params)
+    best_params = grid_search.best_params_
+    
+    # Save the best model
+    best_model = grid_search.best_estimator_
+    model_file_path = os.path.join(save_directory, f'{model_name}_best_model.pkl')
+    with open(model_file_path, 'wb') as model_file:
+        pickle.dump(best_model, model_file)
 
-    
-    for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
-        print('Model:', model_name)
-    
-        pipeline = Pipeline([
-            ('preprocessor', preprocessor),
-            ('model', classifier)
-        ])
-        
-        print('Model:', model_name)
-        
-        # Perform nested cross-validation
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=10, n_jobs=30)
-        
-        fit_params = {'groups': groups_cond}
-        
-        # Evaluate outer loop scores
-        nested_score = cross_validate(grid_search, X_cond, y_cond, groups=groups_cond, cv=outer_cv, params=fit_params, scoring=scorer, n_jobs=1, return_train_score=False)
-        
-        # Get predictions
-        predictions = cross_val_predict(grid_search, X_cond, y_cond, groups=groups_cond, cv=outer_cv, params=fit_params, method='predict', n_jobs=1)
-    
-        # Fit to find best parameters
-        grid_search.fit(X_cond, y_cond, **fit_params)
-        best_params = grid_search.best_params_
-        
-        # Save the best model
-        best_model = grid_search.best_estimator_
-        condition_file_path = os.path.join(save_directory, f'{condition}')
-        os.makedirs(condition_file_path, exist_ok=True)
-        model_file_path = os.path.join(condition_file_path, f'{model_name}_{condition}_best_model.pkl')
-        with open(model_file_path, 'wb') as model_file:
-            pickle.dump(best_model, model_file)
-    
-        results[(condition, model_name)] = {
-            'nested_score': nested_score,
-            'ground_truth': y.values,
-            'predictions': predictions,
-            'best_params': best_params,
-        }
-      
-    dictionary_file_path = os.path.join(condition_file_path, f'{condition}_Classifiers_results_dictionary.pkl')   
-    with open(dictionary_file_path, 'wb') as f:
-        pickle.dump(results, f)
-    
+    results[model_name] = {
+        'nested_score': nested_score,
+        'ground_truth': y.values,
+        'predictions': predictions,
+        'best_params': best_params,
+    }
+  
+dictionary_file_path = os.path.join(save_directory, 'SelectFromModelClassifiers_results_dictionary.pkl')
+with open(dictionary_file_path, 'wb') as f:
+    pickle.dump(results, f)
+
 print('Finito')
