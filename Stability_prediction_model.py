@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
 #load data
 data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stability_dataset_manual_edit.csv")
@@ -154,16 +156,18 @@ models = {
     XGBClassifier(
         random_state=42,
         eval_metric='logloss',
+        device='cuda',
+        tree_method='hist'
     ),
         {
             'model__booster': ['gbtree'],
-            'model__max_depth': [3, 10, 20],
-            'model__subsample': [0.5, 0.7, 0.9, 1],
+            'model__max_depth': [3, 6, 10],
+            'model__subsample': [0.5, 0.8, 1],
             'model__colsample_bytree': [0.7, 0.9, 1],
-            'model__learning_rate': [0.001, 0.01, 0.5],
-            'model__n_estimators': [300, 800, 1000],
-            'model__reg_alpha': [1e-2, 0.1, 1, 10],
-            'model__reg_lambda': [1e-2, 0.1, 1, 10],
+            'model__learning_rate': [0.01, 0.1],
+            'model__n_estimators': [300, 500, 800],
+            'model__reg_alpha': [1e-2, 0.1, 1],
+            'model__reg_lambda': [1e-2, 0.1, 10],
         },
     ),
 #     'MLP Classifier': (
@@ -200,6 +204,7 @@ import pickle
 from sklearn.metrics import f1_score
 import os
 from tqdm.auto import tqdm
+import shutil
 
 scorer = {
     'F1_score': make_scorer(f1_score, average='binary'),
@@ -217,6 +222,8 @@ inner_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
 #directory to save the models
 save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Base'
 os.makedirs(save_directory, exist_ok=True)
+# Save a copy of the running script
+shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
 
 dictionary_file_path = os.path.join(save_directory, 'Base_Classifiers_results_dictionary.pkl')
 
@@ -230,9 +237,9 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
     print('Model:', model_name)
 
     # Skip if already trained (optional safety)
-    if model_name in results:
-        print(f"Skipping {model_name} (already exists)")
-        continue
+    # if model_name in results:
+    #     print(f"Skipping {model_name} (already exists)")
+    #     continue
 
     pipeline = Pipeline([
         ('preprocessor', preprocessor),
@@ -241,7 +248,7 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
     
   
     # Perform nested cross-validation
-    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=0, n_jobs=30)
+    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=10, n_jobs=30)
     
     fit_params = {'groups': groups}
     
