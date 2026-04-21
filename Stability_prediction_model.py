@@ -228,6 +228,10 @@ import os
 from tqdm.auto import tqdm
 import shutil
 
+
+#directory to save the models
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/PCA'
+os.makedirs(save_directory, exist_ok=True)
 # Save a copy of the running script
 shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
 
@@ -245,10 +249,6 @@ groups = (original_api.astype(str)).values
 #GroupKFold for outer cv
 outer_cv = GroupKFold(n_splits=10)
 inner_cv = GroupKFold(n_splits=10)
-
-#directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/PCA'
-os.makedirs(save_directory, exist_ok=True)
 
 for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', total=len(models)):
     pipeline = Pipeline([
