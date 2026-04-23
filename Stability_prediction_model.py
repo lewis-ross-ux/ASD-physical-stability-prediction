@@ -1,15 +1,12 @@
 import pandas as pd
 import numpy as np
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 #load data
 data = pd.read_csv(r"/home/lero/idrive/cmac/DDMAP/stability_studies_master/stability_dataset_manual_edit.csv")
 data = data.drop(data.columns[20:32], axis=1)
 data.drop(['Unnamed: 0.6', 'Unnamed: 0.5', 'Unnamed: 0.4', 'Unnamed: 0.7'], axis=1, inplace=True)
-
-#drop rows where polymer == 'pure'
-data = data[data['Polymer'] != 'Pure'].reset_index(drop=True)
 
 #Store values for API/ polymer, condition
 original_api = data['API']
@@ -17,9 +14,9 @@ original_polymer = data['Polymer']
 original_condition = data['condition']
 
 #fill pure api with 0 for polymer mol desc
-#pure = data['Polymer']=='Pure'
+pure = data['Polymer']=='Pure'
 polymer_descriptors = data.columns[233:]
-#data.loc[pure, polymer_descriptors] = 0
+data.loc[pure, polymer_descriptors] = 0
 suffix = '_polymer'
 data.rename(columns={col: suffix+col for col in polymer_descriptors}, inplace=True)
 
@@ -42,58 +39,10 @@ df.rename(columns={0: 'Features'}, inplace=True)
 print('\nAPI and Polymer features\n\n', df)
 print('\n\nShape of dataframe after removal of mean = 0\n', data.shape)
 
-##---Feature engineering---###
-### perform sperately on API and polymer descriptors
-#### API ####
-threshold = 0.6
-#remove correlated variables using spearman correlation coefficient
-api_cols = data.columns[12:191].tolist()
-
-corr_matrix = data[api_cols].corr(method='spearman')
-
-# --- show correlated pairs ---
-corr_pairs = corr_matrix.abs().unstack().sort_values(kind="quicksort", ascending=False)
-
-high_corr_api = [
-    (a, b) for a, b in corr_pairs.index
-    if a != b and corr_pairs[(a, b)] > threshold
-]
-
-# --- upper triangle filtering ---
-upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
-api_to_drop = [col for col in upper.columns if any(upper[col] > threshold)]
-
-##---Feature engineering---###
-### perform sperately on API and polymer descriptors
-#### Polymer ####
-
-poly_cols = data.columns[192:].tolist()
-
-corr_matrix = data[poly_cols].corr(method='spearman')
-
-corr_pairs = corr_matrix.abs().unstack().sort_values(kind="quicksort", ascending=False)
-
-high_corr_poly = [
-    (a, b) for a, b in corr_pairs.index
-    if a != b and corr_pairs[(a, b)] > threshold
-]
-
-upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
-poly_to_drop = [col for col in upper.columns if any(upper[col] > threshold)]
-
-#drop correlated pairs
-all_to_drop = list(set(api_to_drop + poly_to_drop))
-
-data = data.drop(columns=all_to_drop)
-
-print('length of dataframe\n', data.shape)
-
 #Define Features for ColumnTransformer (AFTER ALL DROPS within dataframe) ---
 categorical_features = ['API', 'Polymer']
 # Identify numerical features:
-dont_scale_features = data.drop(['days_stable_min', 'GFA'], axis=1).columns.tolist()
+dont_scale_features = data.drop(['days_stable_min', 'GFA', 'is_pure', ], axis=1).columns.tolist()
 numerical_features = [col for col in dont_scale_features if col not in categorical_features]
 
 #split data
@@ -113,58 +62,48 @@ from xgboost import XGBClassifier
 from sklearn.linear_model import SGDClassifier
 
 models = {
-    'Logistic Regression': (
-        LogisticRegression(max_iter=1000000),
-        [
-            {  
-                'model__C': np.logspace(-4, 4, 20), 
-                'model__l1_ratio': [0],
-                'model__solver': ['lbfgs', 'newton-cg', 'sag'],
-                #'feature_selection__max_features': [20, 30, 50]
-            },
-            {
-                'model__C': np.logspace(-3, 3, 8),
-                'model__solver': ['liblinear'],
-                'model__l1_ratio': [1],
-                #'feature_selection__max_features': [20, 30, 50]
-            },
-            {
-                'model__C': np.logspace(-4, 4, 20),
-                'model__penalty': ['elasticnet'],
-                'model__solver': ['saga'],
-                'model__l1_ratio': [0.1, 0.5, 0.9],
-                #'feature_selection__max_features': [20, 30, 50]
-            }
-        ]
-    ),
-    'SVC': (
-        SVC(max_iter=10000000, random_state=42),
-        {
-            'model__C': [0.01, 0.1, 1, 2],
-            'model__kernel': ['linear', 'poly', 'rbf'],
-            'model__degree':[1,2,3,4,5],
-            'model__gamma': [0.001, 0.01, 0.1, 1],
-            #'feature_selection__max_features': [20, 30, 50]
-        }
-    ),
-    'K Neighbors Classifier': (
-        KNeighborsClassifier(), 
-        {
-            'model__n_neighbors': np.arange(2,30,1),
-            #'feature_selection__max_features': [20, 30, 50]
-        }
-    ),
-    'Random Forest Classifier': (
-        RandomForestClassifier(random_state=42), 
-        {
-            'model__n_estimators': [300, 500, 1000],
-            'model__max_features': ['sqrt', 'log2', None],
-            'model__max_depth': [None, 1, 2, 3, 5, 10],
-            'model__min_samples_split': [2, 5, 10, 20],
-            'model__max_samples': [0.5, 0.7, 0.9, 1],
-            #'feature_selection__max_features': [20, 30, 50]
-        }
-    ),
+    # 'Logistic Regression': (
+    #     LogisticRegression(max_iter=1000000),
+    #     {
+    #         'model__C': np.logspace(-4, 4, 20),
+    #         'model__penalty': ['elasticnet'],
+    #         'model__solver': ['saga'],
+    #         'model__l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9]
+    #     }
+    # ),
+    # 'SVC': (
+    #     SVC(max_iter=10000000, random_state=42),
+    #     {
+    #         'model__penalty':['l2', 'l1'],
+    #         'model__C': [0.01, 0.1, 1, 10, 100]  
+    #     }
+    # ),
+    # 'K Neighbors Classifier': (
+    #     KNeighborsClassifier(), 
+    #     {
+    #         'model__n_neighbors': np.arange(2,30,1)
+    #     }
+    # ),
+    # 'catboost':(
+    #     CatBoostClassifier(early_stopping_rounds=100),
+    #     {
+    #         'model__learning_rate': [0.001, 0.01, 0.05, 0.1],
+    #         'model__depth':[3, 10, 50],
+    #         'model__iterations': [1000, 1500, 2000],
+    #         'model__l2_leaf_reg': [1, 3, 5, 7, 10],
+    #         'model__subsample': [0.5, 0.7, 0.9, 1]
+    #     }
+    # ),
+    # 'Random Forest Classifier': (
+    #     RandomForestClassifier(random_state=42), 
+    #     {
+    #         'model__n_estimators': [300, 500, 1000, 1500],
+    #         'model__max_features': ['sqrt', 'log2', None],
+    #         'model__max_depth': [None, 1, 2, 3, 5, 10],
+    #         'model__min_samples_split': [2, 5, 10, 20],
+    #         'model__max_samples': [0.5, 0.7, 0.9, 1]
+    #     }
+    # ),
     'XGBoost classifier': (
     XGBClassifier(
         random_state=42,
@@ -183,18 +122,17 @@ models = {
             #'feature_selection__max_features': [20, 30, 50]
         },
     ),
-    'MLP Classifier': (
-        MLPClassifier(max_iter=100000000, early_stopping=True), 
-        {
-            'model__hidden_layer_sizes': [(100,), (200,), (100, 50), (200, 200)],
-            'model__activation': ['tanh', 'relu'],
-            'model__alpha': [0.0001, 0.001, 0.01, 0.05, 0.1],
-            'model__solver': ['sgd', 'adam'],
-            'model__learning_rate': ['adaptive'],
-            'model__learning_rate_init': [0.001, 0.01],
-            #'feature_selection__max_features': [20, 30, 50]
-        }
-    )
+#     'MLP Classifier': (
+#         MLPClassifier(max_iter=100000000, early_stopping=True), 
+#         {
+#             'model__hidden_layer_sizes': [(100,), (200,), (100, 50), (200, 200)],
+#             'model__activation': ['tanh', 'relu'],
+#             'model__alpha': [0.0001, 0.001, 0.01, 0.05, 0.1],
+#             'model__solver': ['sgd', 'adam'],
+#             'model__learning_rate': ['adaptive'],
+#             'model__learning_rate_init': [0.001, 0.01],
+#         }
+#     )
 }
 
 #pre-processor for one-hot encoding and scaling
@@ -212,7 +150,6 @@ preprocessor = ColumnTransformer(
 #Nested cv
 from sklearn.metrics import make_scorer, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.feature_selection import SelectFromModel
 from sklearn.model_selection import GridSearchCV, cross_val_score, GroupKFold, cross_val_predict, cross_validate
 from sklearn.pipeline import Pipeline
 import pickle
@@ -235,10 +172,10 @@ outer_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
 inner_cv = GroupKFold(n_splits=5) #change n_splits to 80:20
 
 #directory to save the models
-save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Pure_systems_removed'
+save_directory = '/home/lero/idrive/cmac/DDMAP/Stability studies/Model_results/Apr26_re_train/Classifier/Default'
 os.makedirs(save_directory, exist_ok=True)
 # Save a copy of the running script
-shutil.copy(__file__, os.path.join(save_directory, "run_script_backup.py"))
+shutil.copy(__file__, os.path.join(save_directory, "XGBrun_script_backup.py"))
 
 results = {}
 
@@ -250,8 +187,9 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
         ('model', classifier)
     ])
     
+  
     # Perform nested cross-validation
-    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=10, n_jobs=30)
+    grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=inner_cv, scoring=scorer, refit='F1_score', verbose=10, n_jobs=1)
     
     fit_params = {'groups': groups}
     
@@ -278,7 +216,7 @@ for model_name, (classifier, param_grid) in tqdm(models.items(), desc='models', 
         'best_params': best_params,
     }
   
-dictionary_file_path = os.path.join(save_directory, 'Pure_API_Removed_Classifiers_results_dictionary.pkl')
+dictionary_file_path = os.path.join(save_directory, 'Default_Classifiers_results_dictionary.pkl')
 with open(dictionary_file_path, 'wb') as f:
     pickle.dump(results, f)
 
