@@ -118,7 +118,8 @@ models = {
             'model__colsample_bytree': [0.7, 0.9, 1],
             'model__learning_rate': [0.01, 0.1],
             'model__n_estimators': [300, 500, 800],
-            'model__reg_lambda': [1e-2, 0.1, 10],
+            'model__reg_alpha': [1e-2, 0.1, 1, 10],
+            'model__reg_lambda': [1e-2, 0.1, 1, 10],
             #'feature_selection__max_features': [20, 30, 50]
         },
     ),
